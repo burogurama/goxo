@@ -147,8 +147,7 @@ FROM goxo:latest
 
 COPY scanner /usr/local/bin/scanner
 COPY scanner.fdset /opt/goxo/scanner.fdset
-COPY ostorlab.yaml /tmp/ostorlab.yaml
-
+ 
 ENV GOXO_HANDLER=/usr/local/bin/scanner \
     GOXO_FDSET=/opt/goxo/scanner.fdset
 ```
