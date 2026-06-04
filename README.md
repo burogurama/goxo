@@ -1,0 +1,160 @@
+# goxo
+
+A language-agnostic engine for writing [OXO](https://github.com/Ostorlab/oxo) agents.
+
+goxo runs as the agent process OXO sees, and does all the OXO heavy-lifting —
+the RabbitMQ bus, the protobuf codec, flow-control admission, the healthcheck.
+Your agent logic runs as a separate **handler** process that goxo spawns and
+talks to over a tiny JSON protocol on stdin/stdout. The handler only ever sees
+plain JSON-like dicts; it never touches protobuf, RabbitMQ, or any OXO detail.
+
+That split is the point: because the engine↔handler contract is just
+JSON-over-pipes, a handler can be written in any language. goxo is the shared
+engine; each language needs only a thin client of the protocol below to become
+an OXO agent SDK. [oxo-go](https://github.com/burogurama/oxo-go) is the Go one.
+
+```
+                  ┌─────────────────────────────┐
+   OXO scan  ╾───╼│ goxo                         │
+  (RabbitMQ,      │  bus · codec · flow control  │
+   protobuf)      │  healthcheck · runner        │
+                  └──────────────┬──────────────┘
+                                 │ JSON notes over stdin/stdout
+                                 │ (init · deliver/start · emit · done)
+                  ┌──────────────┴──────────────┐
+                  │ handler process              │
+                  │  your agent, in any language │
+                  └─────────────────────────────┘
+```
+
+## How a run works
+
+goxo spawns a **fresh handler process per phase** — one process for the start
+phase, one per delivered message. The process is briefed, does its work, and
+exits; that gives crash isolation per message.
+
+- **Start phase** runs once at boot and completes before any message is
+  handled. It is always offered; a handler with no start work just replies
+  done. A start failure is fatal — goxo exits rather than serve. An agent with
+  no input selectors runs its start phase, then exits without consuming.
+- **Per message** goxo decodes the OXO protobuf to a dict, admits the delivery
+  against the flow-control limits (cyclic / depth / accepted-agents from the
+  scan settings), spawns the handler, and hands it the message. The handler's
+  emits are encoded and routed back onto the bus carrying the inbound agent
+  chain. The handler's `done` decides the bus ack (ok) or nack (error); a
+  rejected or poison message is dropped, never requeued.
+
+## Running it
+
+goxo reads the scan inputs the OXO runtime mounts, and takes the handler command
+and codec from the environment:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `GOXO_HANDLER` | Handler command, whitespace-split (e.g. `python handler.py`) | required |
+| `GOXO_FDSET` | Path to the protobuf `FileDescriptorSet` for the codec | required |
+| `GOXO_HANDLER_TIMEOUT` | Per-message timeout (Go duration) | `30m` |
+| `UNIVERSE` | Scan universe (informational) | — |
+| `OXO_SETTINGS_PATH` | `AgentInstanceSettings` proto written by the runtime | `/tmp/settings.binproto` |
+| `OXO_DEFINITION_PATH` | Agent definition (`ostorlab.yaml`) | `/tmp/ostorlab.yaml` |
+
+The agent name, the consumed selectors, and the declared output selectors come
+from the definition / settings; the input selectors prefer the settings and
+fall back to the manifest.
+
+## The note protocol
+
+This is the contract every SDK implements. Each note is one frame: a **4-byte
+big-endian length prefix** followed by a **JSON body**. The current protocol
+version is `1` (sent in `init`).
+
+| Note | Direction | Purpose |
+| --- | --- | --- |
+| `init` | engine → handler | Always first. Carries protocol version, agent identity, config, and the input selectors. |
+| `start` | engine → handler | Run the start phase. Carries no data. |
+| `deliver` | engine → handler | One decoded message: selector, data dict, metadata, and an `id`. |
+| `emit` | handler → engine | Publish `data` on an output selector. Carries an `id`. |
+| `emit_ack` | engine → handler | Answers an `emit`: `ok`, or `error` with a reason (e.g. undeclared output). Advisory. |
+| `done` | handler → engine | Ends the phase: `ok` or `error`. For a delivery this maps to the bus ack/nack. |
+
+A phase is therefore: read `init`, read exactly one of `start`/`deliver`, send
+zero or more `emit`s (each answered by an `emit_ack`), then send a terminal
+`done`. `done` is always an explicit note, never an exit code, and stays
+authoritative for the message outcome.
+
+One handler process serves exactly one phase — a single `start` or a single
+`deliver` — and then exits. Handling more than one message in a single handler
+process is not yet supported.
+
+Logs go to **stderr** — the handler must keep **stdout** free of anything but
+notes.
+
+## Build
+
+```bash
+go build -o goxo .              # the engine binary
+go test ./...
+docker build -t goxo:latest .   # the base image agents extend
+```
+
+Requires Go 1.22+. Runtime dependencies: `google.golang.org/protobuf`,
+`github.com/rabbitmq/amqp091-go`, `gopkg.in/yaml.v3`.
+
+## Packaging an agent
+
+An agent image extends the goxo base image and adds three things you supply:
+the handler binary, the codec descriptor set, and the agent's `ostorlab.yaml`.
+The steps below build an image for an agent named `scanner`.
+
+### 1. Build the handler
+
+Compile your handler for the image's platform. Any language works — it only has
+to speak the note protocol, so use that language's SDK (for Go,
+[gost](https://github.com/burogurama/gost)).
+
+### 2. Generate the descriptor set
+
+Build a self-contained `FileDescriptorSet` over the protos the agent consumes
+and emits. `--include_imports` pulls in transitively imported protos so goxo can
+resolve every type:
+
+```bash
+protoc --include_imports --descriptor_set_out=scanner.fdset \
+  -I path/to/oxo/protos v3/asset/ip.proto v3/report/vulnerability.proto
+```
+
+### 3. Write `oxo.yaml`
+
+Declare the agent name and its input/output selectors:
+
+```yaml
+kind: Agent
+name: scanner
+version: 0.1.0
+in_selectors:
+  - v3.asset.ip
+out_selectors:
+  - v3.report.vulnerability
+```
+
+### 4. Write the Dockerfile
+
+The goxo base image owns the engine entrypoint and the healthcheck port. The
+agent overlay adds its files and points goxo at them:
+
+```dockerfile
+FROM goxo:latest
+
+COPY scanner /usr/local/bin/scanner
+COPY scanner.fdset /opt/goxo/scanner.fdset
+COPY ostorlab.yaml /tmp/ostorlab.yaml
+
+ENV GOXO_HANDLER=/usr/local/bin/scanner \
+    GOXO_FDSET=/opt/goxo/scanner.fdset
+```
+
+### 5. Build the image
+
+```bash
+oxo agent build -f oxo.yaml
+```

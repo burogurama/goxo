@@ -1,0 +1,36 @@
+
+¿
+agent_instance_settings.protoostorlab.runtimes.proto"C
+Arg
+name (	Rname
+type (	Rtype
+value (Rvalue"Y
+PortMapping
+source_port (R
+sourcePort)
+destination_port (RdestinationPort"ä
+AgentInstanceSettings
+key (	Rkey
+bus_url (	RbusUrl,
+bus_exchange_topic (	RbusExchangeTopic,
+bus_management_url (	RbusManagementUrl
+	bus_vhost (	RbusVhost0
+args (2.ostorlab.runtimes.proto.ArgRargs 
+constraints (	Rconstraints
+mounts (	Rmounts%
+restart_policy	 (	RrestartPolicy
+	mem_limit
+ (RmemLimitC
+
+open_ports (2$.ostorlab.runtimes.proto.PortMappingR	openPorts
+replicas (Rreplicas)
+healthcheck_host (	RhealthcheckHost)
+healthcheck_port (RhealthcheckPort
+	redis_url (	RredisUrl2
+tracing_collector_url (	RtracingCollectorUrl
+caps (	Rcaps6
+cyclic_processing_limit (RcyclicProcessingLimit4
+depth_processing_limit (RdepthProcessingLimit'
+accepted_agents (	RacceptedAgents!
+in_selectors (	RinSelectors!
+service_name (	RserviceName

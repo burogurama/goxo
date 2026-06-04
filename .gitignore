@@ -1,0 +1,11 @@
+# Binaries
+/goxo
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Local env
+*.env
+.DS_Store

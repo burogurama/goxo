@@ -1,0 +1,43 @@
+// Vendored from OXO: src/ostorlab/runtimes/proto/agent_instance_settings.proto.
+// The engine reads the binary form of AgentInstanceSettings the OXO runtime
+// writes to /tmp/settings.binproto. Kept here as the source of truth for the
+// embedded descriptor set (see go:generate in settings.go).
+syntax = "proto2";
+
+package ostorlab.runtimes.proto;
+
+message Arg {
+  optional string name = 1;
+  optional string type = 2;
+  optional bytes value = 3;
+}
+
+message PortMapping {
+  optional uint32 source_port = 1;
+  optional uint32 destination_port = 2;
+}
+
+message AgentInstanceSettings {
+  optional string key = 1;
+  optional string bus_url = 2;
+  optional string bus_exchange_topic = 3;
+  optional string bus_management_url = 4;
+  optional string bus_vhost = 5;
+  repeated Arg args = 6;
+  repeated string constraints = 7;
+  repeated string mounts = 8;
+  optional string restart_policy = 9;
+  optional uint64 mem_limit = 10;
+  repeated PortMapping open_ports = 11;
+  optional uint32 replicas = 12;
+  optional string healthcheck_host = 13;
+  optional uint32 healthcheck_port = 14;
+  optional string redis_url = 15;
+  optional string tracing_collector_url = 16;
+  repeated string caps = 17;
+  optional uint32 cyclic_processing_limit = 18;
+  optional uint32 depth_processing_limit = 19;
+  repeated string accepted_agents = 20;
+  repeated string in_selectors = 21;
+  optional string service_name = 22;
+}

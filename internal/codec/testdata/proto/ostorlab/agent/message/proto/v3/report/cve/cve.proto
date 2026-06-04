@@ -1,0 +1,160 @@
+syntax = "proto2";
+
+package ostorlab.agent.message.proto.v3.report.cve;
+
+message Message {
+    optional string cve_id = 1;
+    repeated Target targets = 2;
+    optional int32 cwe = 3;
+    optional string description = 4;
+    repeated Reference references = 5;
+    optional CVSS cvss_scores = 6;
+    optional uint64 published_date = 7;
+    optional uint64 modified_date = 8;
+}
+
+message CVSS { 
+    optional CVSSv3 v31 = 1;
+    optional CVSSv3 v30 = 2;
+    optional CVSSv2 v2 = 3;
+    optional CVSSv4 v40 = 4;
+}
+
+message CVSSv2 {
+    optional string version = 1;
+    optional string vector_string = 2;
+    optional string confidentiality_impact = 3;
+    optional string integrity_impact = 4;
+    optional string availability_impact = 5;
+    optional float base_score = 6;
+    optional string remediation_level = 7;
+    optional string report_confidence = 8;
+    optional float temporal_score = 9;
+    optional string confidentiality_requirement = 10;
+    optional string integrity_requirement = 11;
+    optional string availability_requirement = 12;
+    optional float environmental_score = 13;
+    optional string access_vector = 14;
+    optional string access_complexity = 15;
+    optional string authentication = 16;
+    optional string exploitability = 17;
+    optional string collateral_damage_potential = 18;
+    optional string target_distribution = 19;
+    optional float impact_score = 20;
+    optional float exploitability_score = 21;
+    optional bool ac_insuf_info = 22; 
+    optional bool obtain_all_privilege = 23; 
+    optional bool obtain_user_privilege = 24; 
+    optional bool obtain_other_privilege = 25; 
+    optional bool user_interaction_required = 26; 
+}
+
+message CVSSv3 {
+    optional string version = 1;
+    optional string vector_string = 2;
+    optional string confidentiality_impact = 3;
+    optional string integrity_impact = 4;
+    optional string availability_impact = 5;
+    optional float base_score = 6;
+    optional string remediation_level = 7;
+    optional string report_confidence = 8;
+    optional float temporal_score = 9;
+    optional string confidentiality_requirement = 10;
+    optional string integrity_requirement = 11;
+    optional string availability_requirement = 12;
+    optional float environmental_score = 13;
+    optional string attack_vector = 14; 
+    optional string attack_complexity = 15; 
+    optional string privileges_required = 16; 
+    optional string user_interaction = 17; 
+    optional string scope = 18; 
+    optional string base_severity = 19;
+    optional string exploit_code_maturity = 20;
+    optional string temporal_severity = 21;
+    optional string modified_attack_vector = 22;
+    optional string modified_attack_complexity = 23;
+    optional string modified_privileges_required = 24;
+    optional string modified_user_interaction = 25;
+    optional string modified_scope = 26;
+    optional string modified_confidentiality_impact = 27;
+    optional string modified_integrity_impact = 28;
+    optional string modified_availability_impact = 29;
+    optional string environmental_severity = 30;
+    optional float impact_score = 31;
+    optional float exploitability_score = 32;
+}    
+
+message CVSSv4 {
+    optional string version = 1;
+    optional string vector_string = 2;
+    optional float base_score = 3;
+    optional string base_severity = 4;
+    optional string attack_vector = 5;
+    optional string attack_complexity = 6;
+    optional string attack_requirements = 7;
+    optional string privileges_required = 8;
+    optional string user_interaction = 9;
+    optional string vulnerable_system_confidentiality = 10;
+    optional string vulnerable_system_integrity = 11;
+    optional string vulnerable_system_availability = 12;
+    optional string subsequent_system_confidentiality = 13;
+    optional string subsequent_system_integrity = 14;
+    optional string subsequent_system_availability = 15;
+    optional string exploit_maturity = 16;
+    optional string confidentiality_requirements = 17;
+    optional string integrity_requirements = 18;
+    optional string availability_requirements = 19;
+    optional string modified_attack_vector = 20;
+    optional string modified_attack_complexity = 21;
+    optional string modified_attack_requirements = 22;
+    optional string modified_privileges_required = 23;
+    optional string modified_user_interaction = 24;
+    optional string modified_vulnerable_system_confidentiality = 25;
+    optional string modified_vulnerable_system_integrity = 26;
+    optional string modified_vulnerable_system_availability = 27;
+    optional string modified_subsequent_system_confidentiality = 28;
+    optional string modified_subsequent_system_integrity = 29;
+    optional string modified_subsequent_system_availability = 30;
+    optional string safety = 31;
+    optional string automatable = 32;
+    optional string recovery = 33;
+    optional string value_density = 34;
+    optional string vulnerability_response_effort = 35;
+    optional string provider_urgency = 36;
+}
+
+
+    
+message Reference {
+    optional string url = 1;
+    optional string source = 2;
+    repeated string tags = 3;
+}
+
+message VersionMatch {
+    optional string start = 1;
+    optional bool start_include =2;
+    optional string end = 3;
+    optional bool end_include = 4;
+}
+
+
+
+message CpeMatch {
+    optional string part = 1;
+    optional string vendor = 2;
+    optional string product = 3;
+    optional VersionMatch version = 4;
+    optional string update = 5;
+    optional string edition = 6;
+    optional string language = 7;
+    optional string sw_edition = 8;
+    optional string sw = 9;
+    optional string hw = 10;
+    optional string other = 11;
+    optional bool vulnerable = 12;
+}
+
+message Target {
+    repeated CpeMatch cpe_matches = 1;
+}

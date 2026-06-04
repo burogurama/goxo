@@ -1,0 +1,223 @@
+
+ª
+1ostorlab/agent/message/proto/v3/asset/ip/ip.proto(ostorlab.agent.message.proto.v3.asset.ip"K
+Message
+host (	Rhost
+mask (	Rmask
+version (Rversion
+…
+Bostorlab/agent/message/proto/v3/capture/http/request/request.proto4ostorlab.agent.message.proto.v3.capture.http.request"2
+header
+name (Rname
+value (Rvalue"Ô
+Message
+id (	Rid
+method (	RmethodV
+headers (2<.ostorlab.agent.message.proto.v3.capture.http.request.headerRheaders
+content (Rcontent
+host (	Rhost
+port (Rport!
+http_version (RhttpVersion
+scheme (Rscheme
+path	 (Rpath
+
+time_start
+ (R	timeStart
+time_end (RtimeEnd
+ô
+5ostorlab/agent/message/proto/v3/control/control.proto'ostorlab.agent.message.proto.v3.control"!
+Control
+agents (	Ragents"o
+MessageJ
+control (20.ostorlab.agent.message.proto.v3.control.ControlRcontrol
+message (Rmessage
+¤1
+4ostorlab/agent/message/proto/v3/report/cve/cve.proto*ostorlab.agent.message.proto.v3.report.cve"˜
+Message
+cve_id (	RcveIdL
+targets (22.ostorlab.agent.message.proto.v3.report.cve.TargetRtargets
+cwe (Rcwe 
+description (	RdescriptionU
+
+references (25.ostorlab.agent.message.proto.v3.report.cve.ReferenceR
+referencesQ
+cvss_scores (20.ostorlab.agent.message.proto.v3.report.cve.CVSSR
+cvssScores%
+published_date (RpublishedDate#
+modified_date (RmodifiedDate"œ
+CVSSD
+v31 (22.ostorlab.agent.message.proto.v3.report.cve.CVSSv3Rv31D
+v30 (22.ostorlab.agent.message.proto.v3.report.cve.CVSSv3Rv30B
+v2 (22.ostorlab.agent.message.proto.v3.report.cve.CVSSv2Rv2D
+v40 (22.ostorlab.agent.message.proto.v3.report.cve.CVSSv4Rv40"Á	
+CVSSv2
+version (	Rversion#
+vector_string (	RvectorString5
+confidentiality_impact (	RconfidentialityImpact)
+integrity_impact (	RintegrityImpact/
+availability_impact (	RavailabilityImpact
+
+base_score (R	baseScore+
+remediation_level (	RremediationLevel+
+report_confidence (	RreportConfidence%
+temporal_score	 (RtemporalScore?
+confidentiality_requirement
+ (	RconfidentialityRequirement3
+integrity_requirement (	RintegrityRequirement9
+availability_requirement (	RavailabilityRequirement/
+environmental_score (RenvironmentalScore#
+access_vector (	RaccessVector+
+access_complexity (	RaccessComplexity&
+authentication (	Rauthentication&
+exploitability (	Rexploitability>
+collateral_damage_potential (	RcollateralDamagePotential/
+target_distribution (	RtargetDistribution!
+impact_score (RimpactScore1
+exploitability_score (RexploitabilityScore"
+ac_insuf_info (RacInsufInfo0
+obtain_all_privilege (RobtainAllPrivilege2
+obtain_user_privilege (RobtainUserPrivilege4
+obtain_other_privilege (RobtainOtherPrivilege:
+user_interaction_required (RuserInteractionRequired"’
+CVSSv3
+version (	Rversion#
+vector_string (	RvectorString5
+confidentiality_impact (	RconfidentialityImpact)
+integrity_impact (	RintegrityImpact/
+availability_impact (	RavailabilityImpact
+
+base_score (R	baseScore+
+remediation_level (	RremediationLevel+
+report_confidence (	RreportConfidence%
+temporal_score	 (RtemporalScore?
+confidentiality_requirement
+ (	RconfidentialityRequirement3
+integrity_requirement (	RintegrityRequirement9
+availability_requirement (	RavailabilityRequirement/
+environmental_score (RenvironmentalScore#
+attack_vector (	RattackVector+
+attack_complexity (	RattackComplexity/
+privileges_required (	RprivilegesRequired)
+user_interaction (	RuserInteraction
+scope (	Rscope#
+base_severity (	RbaseSeverity2
+exploit_code_maturity (	RexploitCodeMaturity+
+temporal_severity (	RtemporalSeverity4
+modified_attack_vector (	RmodifiedAttackVector<
+modified_attack_complexity (	RmodifiedAttackComplexity@
+modified_privileges_required (	RmodifiedPrivilegesRequired:
+modified_user_interaction (	RmodifiedUserInteraction%
+modified_scope (	RmodifiedScopeF
+modified_confidentiality_impact (	RmodifiedConfidentialityImpact:
+modified_integrity_impact (	RmodifiedIntegrityImpact@
+modified_availability_impact (	RmodifiedAvailabilityImpact5
+environmental_severity (	RenvironmentalSeverity!
+impact_score (RimpactScore1
+exploitability_score  (RexploitabilityScore"˜
+CVSSv4
+version (	Rversion#
+vector_string (	RvectorString
+
+base_score (R	baseScore#
+base_severity (	RbaseSeverity#
+attack_vector (	RattackVector+
+attack_complexity (	RattackComplexity/
+attack_requirements (	RattackRequirements/
+privileges_required (	RprivilegesRequired)
+user_interaction	 (	RuserInteractionJ
+!vulnerable_system_confidentiality
+ (	RvulnerableSystemConfidentiality>
+vulnerable_system_integrity (	RvulnerableSystemIntegrityD
+vulnerable_system_availability (	RvulnerableSystemAvailabilityJ
+!subsequent_system_confidentiality (	RsubsequentSystemConfidentiality>
+subsequent_system_integrity (	RsubsequentSystemIntegrityD
+subsequent_system_availability (	RsubsequentSystemAvailability)
+exploit_maturity (	RexploitMaturityA
+confidentiality_requirements (	RconfidentialityRequirements5
+integrity_requirements (	RintegrityRequirements;
+availability_requirements (	RavailabilityRequirements4
+modified_attack_vector (	RmodifiedAttackVector<
+modified_attack_complexity (	RmodifiedAttackComplexity@
+modified_attack_requirements (	RmodifiedAttackRequirements@
+modified_privileges_required (	RmodifiedPrivilegesRequired:
+modified_user_interaction (	RmodifiedUserInteraction[
+*modified_vulnerable_system_confidentiality (	R'modifiedVulnerableSystemConfidentialityO
+$modified_vulnerable_system_integrity (	R!modifiedVulnerableSystemIntegrityU
+'modified_vulnerable_system_availability (	R$modifiedVulnerableSystemAvailability[
+*modified_subsequent_system_confidentiality (	R'modifiedSubsequentSystemConfidentialityO
+$modified_subsequent_system_integrity (	R!modifiedSubsequentSystemIntegrityU
+'modified_subsequent_system_availability (	R$modifiedSubsequentSystemAvailability
+safety (	Rsafety 
+automatable  (	Rautomatable
+recovery! (	Rrecovery#
+value_density" (	RvalueDensityB
+vulnerability_response_effort# (	RvulnerabilityResponseEffort)
+provider_urgency$ (	RproviderUrgency"I
+	Reference
+url (	Rurl
+source (	Rsource
+tags (	Rtags"|
+VersionMatch
+start (	Rstart#
+start_include (RstartInclude
+end (	Rend
+end_include (R
+endInclude"ç
+CpeMatch
+part (	Rpart
+vendor (	Rvendor
+product (	RproductR
+version (28.ostorlab.agent.message.proto.v3.report.cve.VersionMatchRversion
+update (	Rupdate
+edition (	Redition
+language (	Rlanguage
+
+sw_edition (	R	swEdition
+sw	 (	Rsw
+hw
+ (	Rhw
+other (	Rother
+
+vulnerable (R
+vulnerable"_
+TargetU
+cpe_matches (24.ostorlab.agent.message.proto.v3.report.cve.CpeMatchR
+cpeMatches
+ý
+Costorlab/agent/message/proto/v3/capture/filesystem/filesystem.proto2ostorlab.agent.message.proto.v3.capture.filesystem"è
+MessageO
+event (29.ostorlab.agent.message.proto.v3.capture.filesystem.EventRevent
+filename (	Rfilename
+pid (Rpid
+uid (Ruid
+gid (Rgid
+mode (Rmode
+ppid (Rppid
+proc (	Rproc*–
+Event
+
+ACCESS
+OPEN
+	OPEN_EXEC
+
+ATTRIB
+
+CREATE
+
+DELETE
+DELETE_SELF
+
+MOVED_FROM
+MOVED_TO	
+	MOVE_SELF
+
+CLOSE_WRITE
+CLOSE_NOWRITE
+
+Q_OVERFLOW
+ACCESS_PERM
+	OPEN_PERM
+OPEN_EXEC_PERM	
+CLOSE
+MOVE	
+ONDIR
