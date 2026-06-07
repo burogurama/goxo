@@ -1,11 +1,6 @@
 // Package engine wires goxo's parts into a running OXO sidecar: it loads the
 // codec descriptor set, connects the bus, serves the OXO healthcheck endpoint,
-// runs the handler's start phase once at boot, and drives a handler process per
-// inbound message. Each delivery is admitted against the stateless flow-control
-// limits, handed to the runner, and acked or nacked by the runner's outcome;
-// the handler's emits are relayed back through the bus carrying the message's
-// agent chain. An agent with no input selectors runs its start phase and then
-// exits.
+// and drives the handler pool
 package engine
 
 import (
@@ -24,16 +19,16 @@ import (
 	"github.com/burogurama/goxo/internal/health"
 	"github.com/burogurama/goxo/internal/manifest"
 	"github.com/burogurama/goxo/internal/note"
-	"github.com/burogurama/goxo/internal/runner"
 	"github.com/burogurama/goxo/internal/settings"
+	"github.com/burogurama/goxo/internal/worker"
 )
 
-// Run connects the bus, serves the healthcheck endpoint, runs the handler's
-// start phase once, then consumes inbound messages until interrupted. It
-// returns nil on a clean shutdown (SIGINT/SIGTERM) and an error if setup or
-// consumption fails. A handler in flight when the signal arrives runs to
-// completion before Run returns, so its message is not dropped. An agent with
-// no input selectors returns after its start phase rather than consuming.
+// Run connects the bus, serves the healthcheck endpoint, starts the worker
+// pool, then consumes inbound messages until interrupted. It returns nil on a
+// clean shutdown (SIGINT/SIGTERM) and an error if setup or consumption fails. On
+// shutdown the pool is drained: each worker finishes its in-flight messages
+// within the grace window before it is killed. An agent with no input selectors
+// has nothing to consume and returns.
 func Run(ctx context.Context, log *slog.Logger, m *manifest.Manifest, s *settings.Settings, p Params) error {
 	if log == nil {
 		log = slog.Default()
@@ -56,14 +51,14 @@ func Run(ctx context.Context, log *slog.Logger, m *manifest.Manifest, s *setting
 		return err
 	}
 
-	var rcfg runner.Config
-	rcfg, err = runnerConfig(m, s, p)
+	var wcfg worker.Config
+	wcfg, err = workerConfig(m, s, p)
 	if err != nil {
 		return err
 	}
 
 	var b *bus.Bus
-	b, err = bus.Connect(busConfig(m, s), cdc, log)
+	b, err = bus.Connect(busConfig(m, s, p), cdc, log)
 	if err != nil {
 		return err
 	}
@@ -77,8 +72,19 @@ func Run(ctx context.Context, log *slog.Logger, m *manifest.Manifest, s *setting
 	defer func() { _ = hc.Close() }()
 	log.Info("goxo: healthcheck listening", "addr", hc.Addr())
 
+	var runCtx context.Context
+	var stop context.CancelFunc
+	runCtx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var pool *worker.Pool = worker.NewPool(wcfg, busPublisher{b}, p.PoolSize, p.WorkerCap, log)
+	pool.Start(runCtx)
+	// Drained before the bus closes (deferred later, so it runs first): each
+	// worker finishes in-flight messages within the grace window, then is killed.
+	defer pool.Shutdown(p.ShutdownGrace)
+
 	eng := &engine{
-		runner:   runner.New(rcfg, busPublisher{b}, log),
+		pool:     pool,
 		log:      log,
 		agent:    m.Name,
 		cyclic:   s.CyclicProcessingLimit,
@@ -86,32 +92,15 @@ func Run(ctx context.Context, log *slog.Logger, m *manifest.Manifest, s *setting
 		accepted: s.AcceptedAgents,
 	}
 
-	var runCtx context.Context
-	var stop context.CancelFunc
-	runCtx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// The start phase runs once at boot, before any message is consumed. It is
-	// always offered — a handler with no start hook just replies done. A failure
-	// is fatal: no message is handled before start succeeds, so goxo returns
-	// rather than serve. A signal during start cancels runCtx, which is a clean
-	// stop rather than a start failure.
-	if err := eng.runner.Start(runCtx); err != nil {
-		if runCtx.Err() != nil {
-			log.Info("goxo: shutting down")
-			return nil
-		}
-		return fmt.Errorf("engine: start phase failed: %w", err)
-	}
-
 	if len(inputs) == 0 {
-		log.Info("goxo: no inputs, exiting after start", "agent", m.Name)
+		log.Info("goxo: no inputs, nothing to consume", "agent", m.Name)
 		return nil
 	}
 
 	log.Info("goxo: consuming",
-		"exchange", s.BusExchangeTopic, "inputs", inputs, "agent", m.Name)
-	err = b.Consume(runCtx, eng.handle)
+		"exchange", s.BusExchangeTopic, "inputs", inputs, "agent", m.Name,
+		"pool", p.PoolSize, "cap", p.WorkerCap)
+	err = b.Consume(runCtx, func(d bus.Delivery) { eng.handle(runCtx, d) })
 	if errors.Is(err, context.Canceled) {
 		log.Info("goxo: shutting down")
 		return nil
@@ -120,9 +109,9 @@ func Run(ctx context.Context, log *slog.Logger, m *manifest.Manifest, s *setting
 }
 
 // engine is the per-message handler bound once at startup: it admits a delivery
-// against the flow-control limits, then drives the handler.
+// against the flow-control limits, then dispatches it to the pool.
 type engine struct {
-	runner   *runner.Runner
+	pool     *worker.Pool
 	log      *slog.Logger
 	agent    string
 	cyclic   uint32
@@ -130,11 +119,11 @@ type engine struct {
 	accepted []string
 }
 
-// handle admits one delivery and runs it. A rejected message is acked and
-// dropped — the rejection is permanent, so requeuing it would only loop. The
-// handler runs on a background context so a shutdown signal lets it finish
-// rather than killing it mid-message; its own timeout still bounds it.
-func (e *engine) handle(d bus.Delivery) {
+// handle admits one delivery and dispatches it. A rejected message is acked and
+// dropped. Dispatch returns once a worker owns the message; the worker acks or
+// nacks it  later. If the pool is shutting down before it can take the message,
+// it is left unsettled so the broker redelivers it on the next run.
+func (e *engine) handle(ctx context.Context, d bus.Delivery) {
 	var (
 		ok     bool
 		reason string
@@ -145,7 +134,7 @@ func (e *engine) handle(d bus.Delivery) {
 		_ = d.Ack()
 		return
 	}
-	e.runner.Handle(context.Background(), runner.Delivery{
+	e.pool.Dispatch(ctx, worker.Delivery{
 		Selector: d.Selector,
 		Data:     d.Data,
 		Chain:    d.Chain,
@@ -187,7 +176,7 @@ func loadCodec(path string) (*codec.Codec, error) {
 	return codec.New(reg), nil
 }
 
-// busPublisher adapts the bus to the runner's Publisher: it appends this agent
+// busPublisher adapts the bus to the worker's Publisher: it appends this agent
 // to the inbound chain and routes the emit. Publishing is bound to a background
 // context so an emit from a message that is finishing during shutdown still
 // goes out.

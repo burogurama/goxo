@@ -79,12 +79,6 @@ func (w *Writer) Init(n Init) error {
 	return WriteFrame(w.w, n)
 }
 
-// Start stamps and sends a start note.
-func (w *Writer) Start(n Start) error {
-	n.Type = TypeStart
-	return WriteFrame(w.w, n)
-}
-
 // Deliver stamps and sends a deliver note.
 func (w *Writer) Deliver(n Deliver) error {
 	n.Type = TypeDeliver

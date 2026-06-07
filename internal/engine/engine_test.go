@@ -1,30 +1,33 @@
 package engine
 
 import (
+	"context"
 	"io"
 	"log/slog"
+
 	"testing"
-	"time"
 
 	"github.com/burogurama/goxo/internal/bus"
-	"github.com/burogurama/goxo/internal/runner"
+	"github.com/burogurama/goxo/internal/worker"
 )
 
 // TestHandleDropsRejectedMessage checks the admission wiring: a message that
 // trips a flow-control limit is acked (deliberately dropped, never requeued)
-// and the handler is never spawned.
+// and never reaches the pool. The pool is built but not started, so a dispatch
+// would block forever — proving the rejected message is not dispatched.
 func TestHandleDropsRejectedMessage(t *testing.T) {
 	const self = "agent/ostorlab/nmap"
 	var acked, nacked bool
+	var pool *worker.Pool = worker.NewPool(worker.Config{
+		Command: []string{"/nonexistent/handler"}, Protocol: Protocol,
+	}, nil, 1, 1, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e := &engine{
-		// A command that would fail loudly proves the handler is not invoked.
-		runner: runner.New(runner.Config{Command: []string{"/nonexistent/handler"}, Timeout: time.Second}, nil,
-			slog.New(slog.NewTextHandler(io.Discard, nil))),
+		pool:   pool,
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		agent:  self,
 		cyclic: 1, // chain already contains self once, so this rejects
 	}
-	e.handle(bus.Delivery{
+	e.handle(context.Background(), bus.Delivery{
 		Selector: "v3.asset.ip",
 		Chain:    []string{self},
 		Ack:      func() error { acked = true; return nil },

@@ -8,8 +8,8 @@ import (
 
 	"github.com/burogurama/goxo/internal/bus"
 	"github.com/burogurama/goxo/internal/manifest"
-	"github.com/burogurama/goxo/internal/runner"
 	"github.com/burogurama/goxo/internal/settings"
+	"github.com/burogurama/goxo/internal/worker"
 )
 
 func jsonArg(t *testing.T, name string, v any) settings.Arg {
@@ -50,6 +50,8 @@ func sampleParams() Params {
 		FdsetPath: "/app/oxo.fdset",
 		Universe:  "u-1",
 		Timeout:   30 * time.Second,
+		PoolSize:  2,
+		WorkerCap: 3,
 	}
 }
 
@@ -67,7 +69,7 @@ func sampleManifest() *manifest.Manifest {
 }
 
 func TestBusConfig(t *testing.T) {
-	var cfg bus.Config = busConfig(sampleManifest(), sampleSettings(t))
+	var cfg bus.Config = busConfig(sampleManifest(), sampleSettings(t), sampleParams())
 	if cfg.URL != "amqp://guest:guest@mq_42:5672/" {
 		t.Errorf("URL = %q", cfg.URL)
 	}
@@ -84,16 +86,20 @@ func TestBusConfig(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Inputs, []string{"v3.asset.ip", "v3.asset.domain_name"}) {
 		t.Errorf("Inputs = %v", cfg.Inputs)
 	}
+	// Prefetch is the pool's total in-flight capacity: pool size times cap.
+	if cfg.Prefetch != 6 {
+		t.Errorf("Prefetch = %d, want 6", cfg.Prefetch)
+	}
 }
 
-func TestRunnerConfig(t *testing.T) {
+func TestWorkerConfig(t *testing.T) {
 	var (
-		rc  runner.Config
+		rc  worker.Config
 		err error
 	)
-	rc, err = runnerConfig(sampleManifest(), sampleSettings(t), sampleParams())
+	rc, err = workerConfig(sampleManifest(), sampleSettings(t), sampleParams())
 	if err != nil {
-		t.Fatalf("runnerConfig: %v", err)
+		t.Fatalf("workerConfig: %v", err)
 	}
 	if !reflect.DeepEqual(rc.Command, []string{"python", "handler.py"}) {
 		t.Errorf("Command = %v", rc.Command)
@@ -126,28 +132,28 @@ func TestRunnerConfig(t *testing.T) {
 	}
 }
 
-func TestRunnerConfigNoArgsYieldsNilConfig(t *testing.T) {
+func TestWorkerConfigNoArgsYieldsNilConfig(t *testing.T) {
 	var s *settings.Settings = sampleSettings(t)
 	s.Args = nil
 	var m *manifest.Manifest = sampleManifest()
 	m.Args = nil
 	var (
-		rc  runner.Config
+		rc  worker.Config
 		err error
 	)
-	rc, err = runnerConfig(m, s, sampleParams())
+	rc, err = workerConfig(m, s, sampleParams())
 	if err != nil {
-		t.Fatalf("runnerConfig: %v", err)
+		t.Fatalf("workerConfig: %v", err)
 	}
 	if rc.Config != nil {
 		t.Errorf("Config = %#v, want nil for no args", rc.Config)
 	}
 }
 
-func TestRunnerConfigBadArgErrors(t *testing.T) {
+func TestWorkerConfigBadArgErrors(t *testing.T) {
 	var s *settings.Settings = sampleSettings(t)
 	s.Args = []settings.Arg{{Name: "broken", Type: "number", Value: []byte("not-json")}}
-	if _, err := runnerConfig(sampleManifest(), s, sampleParams()); err == nil {
+	if _, err := workerConfig(sampleManifest(), s, sampleParams()); err == nil {
 		t.Fatal("expected error for undecodable arg")
 	}
 }

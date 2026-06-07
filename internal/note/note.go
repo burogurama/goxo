@@ -1,18 +1,13 @@
-// Package note defines the IPC protocol between the goxo engine and a
-// handler process. The two exchange small JSON "notes" over the handler's
-// stdin/stdout. Engine→handler notes are init, start, deliver, emit_ack and
-// shutdown; handler→engine notes are emit and done.
-//
-// init is always the first note. done is always an explicit note, never an
-// exit code. The deliver/done and emit/emit_ack notes carry an id that pairs
-// a reply with its request.
+// Package note defines the IPC protocol between the goxo engine and a handler
+// process: small JSON "notes" exchanged over the handler's stdin/stdout.
+// Engine→handler notes are init, deliver, emit_ack and shutdown; handler→engine
+// notes are emit and done.
 package note
 
-// Note types. Engine→handler: init, start, deliver, emit_ack, shutdown.
-// Handler→engine: emit, done.
+// Note types. Engine→handler: init, deliver, emit_ack, shutdown. Handler→engine:
+// emit, done.
 const (
 	TypeInit     = "init"
-	TypeStart    = "start"
 	TypeDeliver  = "deliver"
 	TypeEmitAck  = "emit_ack"
 	TypeShutdown = "shutdown"
@@ -40,9 +35,8 @@ type Meta struct {
 	Headers   map[string]any `json:"headers,omitempty"`
 }
 
-// Init is the first note the engine sends. It hands the handler everything it
-// needs for the run: protocol version, identity, agent config, and the
-// declared input selectors.
+// Init is the first note the engine sends, carrying the protocol version,
+// identity, agent config, and declared input selectors.
 type Init struct {
 	Type     string         `json:"type"`
 	Protocol int            `json:"protocol"`
@@ -51,16 +45,8 @@ type Init struct {
 	Inputs   []string       `json:"inputs,omitempty"`
 }
 
-// Start runs the handler's start phase: its optional @OnStart lifecycle work,
-// which any handler may implement whether or not it consumes messages. It
-// carries no data; the handler emits and then sends done.
-type Start struct {
-	Type string `json:"type"`
-}
-
-// Deliver hands the handler one decoded scan-message to process. Data is the
-// proto fields as a plain JSON-like dict; the engine owns the codec so the
-// handler never sees protobuf.
+// Deliver hands the handler one decoded scan-message. Data is the message fields
+// as a plain JSON-like dict.
 type Deliver struct {
 	Type     string         `json:"type"`
 	ID       int64          `json:"id"`
@@ -85,17 +71,20 @@ type Shutdown struct {
 	DeadlineMS int64  `json:"deadline_ms,omitempty"`
 }
 
-// Emit is a handler's request to publish a message on one of its output
-// selectors. The engine encodes Data and routes it on the bus.
+// Emit is a handler's request to publish Data on one of its output selectors.
+// Deliver is the id of the message this emit answers; when it is absent the
+// engine stamps this agent as the sole chain element. ID is the emit's own id,
+// echoed by the emit_ack.
 type Emit struct {
 	Type     string         `json:"type"`
 	ID       int64          `json:"id"`
+	Deliver  int64          `json:"deliver,omitempty"`
 	Selector string         `json:"selector"`
 	Data     map[string]any `json:"data"`
 }
 
 // Done ends the handler's work for an id: ok if it processed cleanly, error
-// (with a reason) if it failed. The engine maps this to the bus ack/nack.
+// (with a reason) if it failed.
 type Done struct {
 	Type   string `json:"type"`
 	ID     int64  `json:"id"`
