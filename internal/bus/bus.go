@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -24,6 +25,7 @@ type Config struct {
 	Agent    string   // self name: appended to the emit chain (the pipeline identity)
 	Service  string   // queue-name override; the queue is (Service or Agent)+"_queue"
 	Inputs   []string // input selectors, each bound as selector+".#"
+	Prefetch int      // unacked-message window; the pool's total in-flight capacity
 }
 
 // queueName is the agent's queue: a named instance (Service set) gets its own
@@ -51,13 +53,16 @@ type Delivery struct {
 }
 
 // Bus holds the AMQP connection and channel and the codec used to translate
-// messages.
+// messages. chMu serializes channel operations (publish, ack, nack): one engine
+// drives many concurrent workers whose emits and settlements share this channel,
+// and an amqp091 channel is not safe for concurrent use.
 type Bus struct {
 	cfg   Config
 	codec *codec.Codec
 	log   *slog.Logger
 	conn  *amqp.Connection
 	ch    *amqp.Channel
+	chMu  sync.Mutex
 	queue string
 }
 
@@ -91,7 +96,9 @@ func Connect(cfg Config, c *codec.Codec, log *slog.Logger) (*Bus, error) {
 }
 
 // setup declares the exchange, queue, prefetch, and bindings. The exchange
-// arguments match OXO so a goxo engine and an OXO agent can share one.
+// arguments match OXO so a goxo engine and an OXO agent can share one. Prefetch
+// is the pool's total in-flight capacity, so an idle worker always has a message
+// waiting and a full pool stops the broker from delivering more.
 func (b *Bus) setup() error {
 	args := amqp.Table{"x-max-length": int32(10000), "x-overflow": "reject-publish"}
 	if err := b.ch.ExchangeDeclare(b.cfg.Exchange, "topic", false, false, false, false, args); err != nil {
@@ -100,7 +107,11 @@ func (b *Bus) setup() error {
 	if _, err := b.ch.QueueDeclare(b.queue, true, false, false, false, nil); err != nil {
 		return fmt.Errorf("bus: declare queue %s: %w", b.queue, err)
 	}
-	if err := b.ch.Qos(1, 0, false); err != nil {
+	var prefetch int = b.cfg.Prefetch
+	if prefetch < 1 {
+		prefetch = 1
+	}
+	if err := b.ch.Qos(prefetch, 0, false); err != nil {
 		return fmt.Errorf("bus: set qos: %w", err)
 	}
 	for _, sel := range b.cfg.Inputs {
@@ -113,10 +124,11 @@ func (b *Bus) setup() error {
 }
 
 // Consume subscribes and calls handle for each inbound message until ctx is
-// done or the AMQP channel closes. Prefetch is one, so handle runs for one
-// message at a time and the next arrives only after this one is acked.
-// Messages whose envelope or inner proto fails to decode are nacked (dropped)
-// without reaching handle.
+// done or the AMQP channel closes. handle dispatches to the pool and returns
+// without waiting; a message is acked or nacked later, off the consume
+// goroutine, so the channel is shared and its operations are serialized.
+// Prefetch caps how many messages are unacked at once. Messages whose envelope
+// or inner proto fails to decode are nacked (dropped) without reaching handle.
 func (b *Bus) Consume(ctx context.Context, handle func(Delivery)) error {
 	var (
 		deliveries <-chan amqp.Delivery
@@ -155,14 +167,14 @@ func (b *Bus) dispatch(d amqp.Delivery, handle func(Delivery)) {
 	agents, inner, err = unwrapControl(b.codec, d.Body)
 	if err != nil {
 		b.log.Warn("drop unparsable envelope", "routing_key", d.RoutingKey, "err", err)
-		_ = d.Nack(false, false)
+		b.nack(d)
 		return
 	}
 	var data map[string]any
 	data, err = b.codec.Decode(selector, inner)
 	if err != nil {
 		b.log.Warn("drop undecodable message", "selector", selector, "err", err)
-		_ = d.Nack(false, false)
+		b.nack(d)
 		return
 	}
 	handle(Delivery{
@@ -171,9 +183,24 @@ func (b *Bus) dispatch(d amqp.Delivery, handle func(Delivery)) {
 		Chain:     agents,
 		MessageID: messageIDFromRoutingKey(d.RoutingKey),
 		Headers:   map[string]any(d.Headers),
-		Ack:       func() error { return d.Ack(false) },
-		Nack:      func() error { return d.Nack(false, false) },
+		Ack:       func() error { return b.ack(d) },
+		Nack:      func() error { return b.nack(d) },
 	})
+}
+
+// ack and nack settle one AMQP message. They run off the consume goroutine
+// (from a worker once it finishes the message), so they take chMu to serialize
+// channel use. nack does not requeue: a dropped message is poison.
+func (b *Bus) ack(d amqp.Delivery) error {
+	b.chMu.Lock()
+	defer b.chMu.Unlock()
+	return d.Ack(false)
+}
+
+func (b *Bus) nack(d amqp.Delivery) error {
+	b.chMu.Lock()
+	defer b.chMu.Unlock()
+	return d.Nack(false, false)
 }
 
 // Publish encodes data for the selector, wraps it in a control envelope that
@@ -189,7 +216,10 @@ func (b *Bus) Publish(ctx context.Context, chain []string, selector string, data
 	if err != nil {
 		return err
 	}
-	if err := b.ch.PublishWithContext(ctx, b.cfg.Exchange, routingKey, false, false, msg); err != nil {
+	b.chMu.Lock()
+	err = b.ch.PublishWithContext(ctx, b.cfg.Exchange, routingKey, false, false, msg)
+	b.chMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("bus: publish %s: %w", routingKey, err)
 	}
 	return nil

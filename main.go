@@ -11,7 +11,10 @@
 //
 //	GOXO_HANDLER          handler command, whitespace-split (e.g. "python handler.py")
 //	GOXO_FDSET            path to the codec FileDescriptorSet
-//	GOXO_HANDLER_TIMEOUT  per-message timeout (Go duration, default 30m)
+//	GOXO_HANDLER_TIMEOUT  per-message timeout (Go duration; default 0, no timeout)
+//	GOXO_POOL_SIZE        number of long-lived handler processes (default 1)
+//	GOXO_WORKER_CAP       messages each process may handle at once (default 1)
+//	GOXO_SHUTDOWN_GRACE   time a worker gets to drain before SIGKILL (default 10s)
 //	UNIVERSE              scan universe, informational
 package main
 
@@ -19,6 +22,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,8 +31,9 @@ import (
 	"github.com/burogurama/goxo/internal/settings"
 )
 
-// defaultTimeout bounds a single handler run when GOXO_HANDLER_TIMEOUT is unset.
-const defaultTimeout = 30 * time.Minute
+// defaultShutdownGrace bounds how long a worker may drain in-flight messages on
+// shutdown before it is killed.
+const defaultShutdownGrace = 10 * time.Second
 
 func main() {
 	var log *slog.Logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -53,10 +58,13 @@ func run(log *slog.Logger) error {
 	}
 
 	p := engine.Params{
-		Handler:   strings.Fields(os.Getenv("GOXO_HANDLER")),
-		FdsetPath: os.Getenv("GOXO_FDSET"),
-		Universe:  os.Getenv("UNIVERSE"),
-		Timeout:   durationOr("GOXO_HANDLER_TIMEOUT", defaultTimeout),
+		Handler:       strings.Fields(os.Getenv("GOXO_HANDLER")),
+		FdsetPath:     os.Getenv("GOXO_FDSET"),
+		Universe:      os.Getenv("UNIVERSE"),
+		Timeout:       durationOr("GOXO_HANDLER_TIMEOUT", 0),
+		PoolSize:      intOr("GOXO_POOL_SIZE", 1),
+		WorkerCap:     intOr("GOXO_WORKER_CAP", 1),
+		ShutdownGrace: durationOr("GOXO_SHUTDOWN_GRACE", defaultShutdownGrace),
 	}
 	return engine.Run(context.Background(), log, m, s, p)
 }
@@ -85,4 +93,22 @@ func durationOr(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// intOr parses the environment value for key as an integer, falling back when
+// it is unset or unparseable.
+func intOr(key string, fallback int) int {
+	var raw string = os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	var (
+		n   int
+		err error
+	)
+	n, err = strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
