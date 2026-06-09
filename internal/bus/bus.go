@@ -40,8 +40,8 @@ func queueName(cfg Config) string {
 }
 
 // Delivery is one inbound message decoded to a dict, plus the agents path it
-// carried and the ack callbacks bound to the underlying AMQP message. Nack
-// does not requeue.
+// carried and the ack callbacks bound to the underlying AMQP message. Nack drops
+// the message without requeue; Requeue returns it to the broker for redelivery.
 type Delivery struct {
 	Selector  string
 	Data      map[string]any
@@ -50,6 +50,7 @@ type Delivery struct {
 	Headers   map[string]any
 	Ack       func() error
 	Nack      func() error
+	Requeue   func() error
 }
 
 // Bus holds the AMQP connection and channel and the codec used to translate
@@ -185,12 +186,14 @@ func (b *Bus) dispatch(d amqp.Delivery, handle func(Delivery)) {
 		Headers:   map[string]any(d.Headers),
 		Ack:       func() error { return b.ack(d) },
 		Nack:      func() error { return b.nack(d) },
+		Requeue:   func() error { return b.requeue(d) },
 	})
 }
 
-// ack and nack settle one AMQP message. They run off the consume goroutine
-// (from a worker once it finishes the message), so they take chMu to serialize
-// channel use. nack does not requeue: a dropped message is poison.
+// ack, nack and requeue settle one AMQP message. They run off the consume
+// goroutine (from a worker once it finishes the message), so they take chMu to
+// serialize channel use. nack does not requeue: a dropped message is poison.
+// requeue returns the message to the broker for redelivery.
 func (b *Bus) ack(d amqp.Delivery) error {
 	b.chMu.Lock()
 	defer b.chMu.Unlock()
@@ -201,6 +204,12 @@ func (b *Bus) nack(d amqp.Delivery) error {
 	b.chMu.Lock()
 	defer b.chMu.Unlock()
 	return d.Nack(false, false)
+}
+
+func (b *Bus) requeue(d amqp.Delivery) error {
+	b.chMu.Lock()
+	defer b.chMu.Unlock()
+	return d.Nack(false, true)
 }
 
 // Publish encodes data for the selector, wraps it in a control envelope that

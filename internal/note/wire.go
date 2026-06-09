@@ -97,15 +97,16 @@ func (w *Writer) Shutdown(n Shutdown) error {
 	return WriteFrame(w.w, n)
 }
 
-// HandlerNote is one decoded handler→engine note: exactly one of Emit or Done
-// is non-nil.
+// HandlerNote is one decoded handler→engine note: exactly one of Emit, Done or
+// Pickup is non-nil.
 type HandlerNote struct {
-	Emit *Emit
-	Done *Done
+	Emit   *Emit
+	Done   *Done
+	Pickup *Pickup
 }
 
-// Reader decodes handler→engine notes. Only emit and done are valid in that
-// direction; any other type is an error.
+// Reader decodes handler→engine notes. Only emit, done and pickup are valid in
+// that direction; any other type is an error.
 type Reader struct {
 	r *bufio.Reader
 }
@@ -145,6 +146,12 @@ func (r *Reader) Read() (HandlerNote, error) {
 			return HandlerNote{}, fmt.Errorf("note: decode done: %w", err)
 		}
 		return HandlerNote{Done: &d}, nil
+	case TypePickup:
+		var pk Pickup
+		if err := json.Unmarshal(body, &pk); err != nil {
+			return HandlerNote{}, fmt.Errorf("note: decode pickup: %w", err)
+		}
+		return HandlerNote{Pickup: &pk}, nil
 	default:
 		return HandlerNote{}, fmt.Errorf("note: unexpected handler note type %q", peek.Type)
 	}

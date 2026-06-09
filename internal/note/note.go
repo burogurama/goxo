@@ -1,11 +1,11 @@
 // Package note defines the IPC protocol between the goxo engine and a handler
 // process: small JSON "notes" exchanged over the handler's stdin/stdout.
 // Engine→handler notes are init, deliver, emit_ack and shutdown; handler→engine
-// notes are emit and done.
+// notes are emit, done and pickup.
 package note
 
 // Note types. Engine→handler: init, deliver, emit_ack, shutdown. Handler→engine:
-// emit, done.
+// emit, done, pickup.
 const (
 	TypeInit     = "init"
 	TypeDeliver  = "deliver"
@@ -13,6 +13,7 @@ const (
 	TypeShutdown = "shutdown"
 	TypeEmit     = "emit"
 	TypeDone     = "done"
+	TypePickup   = "pickup"
 )
 
 // Outcome statuses carried by emit_ack and done.
@@ -90,4 +91,11 @@ type Done struct {
 	ID     int64  `json:"id"`
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+}
+
+// Pickup reports that the handler has taken the deliver with this id off the
+// wire, before it runs the message.
+type Pickup struct {
+	Type string `json:"type"`
+	ID   int64  `json:"id"`
 }

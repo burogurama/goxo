@@ -141,6 +141,7 @@ func (e *engine) handle(ctx context.Context, d bus.Delivery) {
 		Meta:     note.Meta{MessageID: d.MessageID, Headers: d.Headers},
 		Ack:      func() { _ = d.Ack() },
 		Nack:     func() { _ = d.Nack() },
+		Requeue:  func() { _ = d.Requeue() },
 	})
 }
 
