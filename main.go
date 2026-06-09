@@ -6,34 +6,34 @@
 // (OXO_SETTINGS_PATH, default /tmp/settings.binproto). The agent name, the
 // declared selectors, and the argument defaults come from the agent definition
 // (OXO_DEFINITION_PATH, default /tmp/ostorlab.yaml). The remaining inputs — the
-// handler command, the codec descriptor set, and per-run knobs — come from the
-// environment:
+// handler command, the codec descriptor set, and per-run knobs — come from
+// goxo's own configuration file (GOXO_CONFIG, default /goxo.yaml), and each may
+// be overridden by an environment variable:
 //
-//	GOXO_HANDLER          handler command, whitespace-split (e.g. "python handler.py")
-//	GOXO_FDSET            path to the codec FileDescriptorSet
-//	GOXO_HANDLER_TIMEOUT  per-message timeout (Go duration; default 0, no timeout)
-//	GOXO_POOL_SIZE        number of long-lived handler processes (default 1)
-//	GOXO_WORKER_CAP       messages each process may handle at once (default 1)
-//	GOXO_SHUTDOWN_GRACE   time a worker gets to drain before SIGKILL (default 10s)
-//	UNIVERSE              scan universe, informational
+//	file key        env variable          meaning
+//	handler         GOXO_HANDLER          handler command (the env form is whitespace-split)
+//	fdset           GOXO_FDSET            path to the codec FileDescriptorSet
+//	timeout         GOXO_HANDLER_TIMEOUT  per-message timeout (Go duration; default 0, no timeout)
+//	pool            GOXO_POOL_SIZE        number of long-lived handler processes (default 1)
+//	cap             GOXO_WORKER_CAP       messages each process may handle at once (default 1)
+//	shutdown_grace  GOXO_SHUTDOWN_GRACE   time a worker gets to drain before SIGKILL (default 10s)
+//	—               UNIVERSE              scan universe, informational
 package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/burogurama/goxo/internal/config"
 	"github.com/burogurama/goxo/internal/engine"
 	"github.com/burogurama/goxo/internal/manifest"
 	"github.com/burogurama/goxo/internal/settings"
 )
-
-// defaultShutdownGrace bounds how long a worker may drain in-flight messages on
-// shutdown before it is killed.
-const defaultShutdownGrace = 10 * time.Second
 
 func main() {
 	var log *slog.Logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -57,16 +57,48 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	var c config.Config
+	c, err = loadConfig()
+	if err != nil {
+		return err
+	}
+
 	p := engine.Params{
-		Handler:       strings.Fields(os.Getenv("GOXO_HANDLER")),
-		FdsetPath:     os.Getenv("GOXO_FDSET"),
+		Handler:       handlerOr("GOXO_HANDLER", c.Handler),
+		FdsetPath:     envOr("GOXO_FDSET", c.Fdset),
 		Universe:      os.Getenv("UNIVERSE"),
-		Timeout:       durationOr("GOXO_HANDLER_TIMEOUT", 0),
-		PoolSize:      intOr("GOXO_POOL_SIZE", 1),
-		WorkerCap:     intOr("GOXO_WORKER_CAP", 1),
-		ShutdownGrace: durationOr("GOXO_SHUTDOWN_GRACE", defaultShutdownGrace),
+		Timeout:       durationOr("GOXO_HANDLER_TIMEOUT", c.HandlerTimeout),
+		PoolSize:      intOr("GOXO_POOL_SIZE", c.WorkerPoolSize),
+		WorkerCap:     intOr("GOXO_WORKER_CAP", c.WorkerQueueSize),
+		ShutdownGrace: durationOr("GOXO_SHUTDOWN_GRACE", c.WorkerShutdownGrace),
 	}
 	return engine.Run(context.Background(), log, m, s, p)
+}
+
+// loadConfig reads goxo.yaml: the file named by GOXO_CONFIG, whose absence is
+// an error, or the default path, whose absence yields the defaults.
+func loadConfig() (config.Config, error) {
+	if path := os.Getenv("GOXO_CONFIG"); path != "" {
+		return config.Load(path)
+	}
+	var (
+		c   config.Config
+		err error
+	)
+	c, err = config.Load(config.DefaultPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return config.Default(), nil
+	}
+	return c, err
+}
+
+// handlerOr returns the whitespace-split environment command for key, or
+// fallback when it is unset.
+func handlerOr(key string, fallback []string) []string {
+	if v := os.Getenv(key); v != "" {
+		return strings.Fields(v)
+	}
+	return fallback
 }
 
 // envOr returns the environment value for key, or fallback when it is unset.
