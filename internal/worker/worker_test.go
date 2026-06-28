@@ -54,6 +54,7 @@ func fakeHandler(mode string) int {
 		default:
 			continue // emit_ack, shutdown: ignored by the fake
 		}
+		writeHandler(note.Pickup{Type: note.TypePickup, ID: id}) // pickup precedes handling
 		if code, exit := handleMsg(mode, id); exit {
 			return code
 		}
@@ -88,6 +89,10 @@ func handleMsg(mode string, id int64) (int, bool) {
 			return 1, true // first process crashes mid-message
 		}
 		writeHandler(note.Done{Type: note.TypeDone, ID: id, Status: note.StatusOK})
+	case "emithang":
+		writeHandler(note.Emit{Type: note.TypeEmit, ID: 1, Deliver: id,
+			Selector: "v3.report.vuln", Data: map[string]any{"x": float64(1)}})
+		select {} // holds this message, never reads the next; only SIGKILL stops it
 	case "hang":
 		select {} // never reads stdin again; only SIGKILL stops it
 	}
@@ -145,6 +150,7 @@ func (o *outcome) delivery() Delivery {
 		Meta:     note.Meta{MessageID: "m-1"},
 		Ack:      func() { o.done <- "ack" },
 		Nack:     func() { o.done <- "nack" },
+		Requeue:  func() { o.done <- "requeue" },
 	}
 }
 
@@ -307,6 +313,57 @@ func TestDispatch_CtxCancelledReturnsFalse(t *testing.T) {
 	case r := <-o.done:
 		t.Fatalf("delivery must be untouched on refused dispatch, got %s", r)
 	default:
+	}
+}
+
+// waitForPublish blocks until the fake publisher has recorded at least n
+// publishes, failing the test if that does not happen in time.
+func waitForPublish(t *testing.T, pub *fakePublisher, n int) {
+	t.Helper()
+	var deadline time.Time = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(pub.all()) >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d publish(es)", n)
+}
+
+// TestShutdownKill_RequeuesUnpicked checks the crash-recovery split: when a
+// process dies with messages in flight, one it had picked up is dropped (nacked)
+// while one it never picked up is requeued.
+func TestShutdownKill_RequeuesUnpicked(t *testing.T) {
+	pub := &fakePublisher{}
+	var p *Pool = NewPool(Config{
+		Command:  []string{os.Args[0]},
+		Env:      []string{"GOXO_FAKE=emithang"},
+		Outputs:  []string{"v3.report.vuln"},
+		Protocol: 2,
+	}, pub, 1, 2, testLogger())
+	p.Start(context.Background())
+
+	o1 := newOutcome()
+	o2 := newOutcome()
+	if !p.Dispatch(context.Background(), o1.delivery()) {
+		t.Fatal("first delivery not accepted")
+	}
+	if !p.Dispatch(context.Background(), o2.delivery()) {
+		t.Fatal("second delivery not accepted")
+	}
+	// The handler picks up the first message and emits, then hangs holding it; the
+	// second stays unread in the pipe. The publish proves the first was picked up,
+	// since the pickup note precedes the emit on the same stream.
+	waitForPublish(t, pub, 1)
+
+	// The handler hangs, so the grace elapses and the process is SIGKILLed.
+	p.Shutdown(200 * time.Millisecond)
+
+	if r := o1.wait(t); r != "nack" {
+		t.Fatalf("picked-up message: expected nack (dropped), got %s", r)
+	}
+	if r := o2.wait(t); r != "requeue" {
+		t.Fatalf("un-picked-up message: expected requeue, got %s", r)
 	}
 }
 

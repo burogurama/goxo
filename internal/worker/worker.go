@@ -2,9 +2,9 @@
 // long-lived handler process, sends it init once, then hands it deliver notes,
 // relays its emits to the bus, and settles each message on the matching done. A
 // process may have several messages in flight at once, tagged by id; if it exits
-// unexpectedly those messages are nacked and the worker respawns it. A Pool
-// spreads a fixed set of workers and dispatches each message to the least loaded
-// one.
+// unexpectedly the messages it had picked up are dropped and those it had not are
+// requeued, and the worker respawns it. A Pool spreads a fixed set of workers and
+// dispatches each message to the least loaded one.
 package worker
 
 import (
@@ -34,9 +34,10 @@ type Publisher interface {
 
 // Delivery is one decoded scan-message to hand a worker, plus the bus callbacks
 // the worker invokes once the handler finishes it. Chain is the inbound agents
-// path, stamped on the message's emits but never shown to the handler. Nack
-// does not requeue (poison messages are dropped). Exactly one of Ack or Nack is
-// called, once, when the message settles.
+// path, stamped on the message's emits but never shown to the handler. Ack
+// settles the message; Nack drops it without requeue; Requeue returns it to the
+// broker for redelivery. Exactly one of the three is called, once, when the
+// message settles.
 type Delivery struct {
 	Selector string
 	Data     map[string]any
@@ -44,6 +45,7 @@ type Delivery struct {
 	Meta     note.Meta
 	Ack      func()
 	Nack     func()
+	Requeue  func()
 }
 
 // Config is everything needed to spawn and brief one handler process. Timeout
@@ -60,14 +62,17 @@ type Config struct {
 }
 
 // inflight is one message a worker has handed its process but not yet seen a
-// done for. chain is stamped on the message's emits; ack and nack settle the
-// bus message exactly once (the map entry is the gate — whoever deletes it owns
-// the settle). timer fires the per-message timeout when one is set.
+// done for. chain is stamped on the message's emits; ack, nack and requeue
+// settle the bus message exactly once (the map entry is the gate — whoever
+// deletes it owns the settle). picked records that the handler reported taking
+// the message off the wire. timer fires the per-message timeout when one is set.
 type inflight struct {
-	chain []string
-	ack   func()
-	nack  func()
-	timer *time.Timer
+	chain   []string
+	ack     func()
+	nack    func()
+	requeue func()
+	picked  bool
+	timer   *time.Timer
 }
 
 // outNote is one engine→handler note queued for a process's writer goroutine.
@@ -199,13 +204,19 @@ func (w *worker) run(ctx context.Context) {
 		w.cond.Broadcast()
 		w.mu.Unlock()
 
-		// Messages still in flight got no done: nack them (dropped).
+		// Messages still in flight got no done. One the handler had picked up is
+		// dropped (poison); one it never picked up is requeued.
 		for id, m := range stale {
 			if m.timer != nil {
 				m.timer.Stop()
 			}
-			w.log.Warn("handler exited with message in flight", "worker", w.idx, "id", id)
-			m.nack()
+			if m.picked {
+				w.log.Warn("handler exited with picked-up message in flight", "worker", w.idx, "id", id)
+				m.nack()
+			} else {
+				w.log.Warn("handler exited with un-picked-up message; requeueing", "worker", w.idx, "id", id)
+				m.requeue()
+			}
 		}
 
 		if closing {
@@ -317,6 +328,8 @@ func (w *worker) readLoop(p *proc, stdout io.Reader) {
 			w.onEmit(p, *n.Emit)
 		case n.Done != nil:
 			w.onDone(*n.Done)
+		case n.Pickup != nil:
+			w.onPickup(n.Pickup.ID)
 		}
 	}
 }
@@ -354,6 +367,16 @@ func (w *worker) ackEmit(p *proc, a note.EmitAck) {
 	case p.out <- outNote{emitAck: &a}:
 	default:
 	}
+}
+
+// onPickup marks the message picked up by the handler. A pickup for an unknown
+// id (already settled, or never sent) is ignored.
+func (w *worker) onPickup(id int64) {
+	w.mu.Lock()
+	if m, ok := w.msgs[id]; ok {
+		m.picked = true
+	}
+	w.mu.Unlock()
 }
 
 // onDone settles the message the done names: ack on ok, nack on error. A done
@@ -411,7 +434,7 @@ func (w *worker) Dispatch(ctx context.Context, d Delivery) bool {
 	var id int64 = w.nextID
 	w.nextID++
 	var p *proc = w.cur
-	var m *inflight = &inflight{chain: d.Chain, ack: d.Ack, nack: d.Nack}
+	var m *inflight = &inflight{chain: d.Chain, ack: d.Ack, nack: d.Nack, requeue: d.Requeue}
 	if w.cfg.Timeout > 0 {
 		m.timer = w.armTimeout(id)
 	}
@@ -420,8 +443,9 @@ func (w *worker) Dispatch(ctx context.Context, d Delivery) bool {
 
 	var nd note.Deliver = note.Deliver{ID: id, Selector: d.Selector, Data: d.Data, Meta: d.Meta}
 	if !p.send(ctx, outNote{deliver: &nd}) {
-		// The process stopped before it took the note. Reclaim the entry (if the
-		// death path has not already) and nack it, so it settles exactly once.
+		// The process stopped before it took the note: the handler never saw the
+		// message, so reclaim the entry (if the death path has not already) and
+		// requeue it, so it settles exactly once.
 		w.mu.Lock()
 		_, still := w.msgs[id]
 		if still {
@@ -433,7 +457,7 @@ func (w *worker) Dispatch(ctx context.Context, d Delivery) bool {
 		}
 		w.mu.Unlock()
 		if still {
-			d.Nack()
+			d.Requeue()
 		}
 	}
 	return true

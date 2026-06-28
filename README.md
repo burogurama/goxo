@@ -46,17 +46,33 @@ exits; that gives crash isolation per message.
 
 ## Running it
 
-goxo reads the scan inputs the OXO runtime mounts, and takes the handler command
-and codec from the environment:
+goxo reads the scan inputs the OXO runtime mounts. Its own knobs — the handler
+command, the codec descriptor set, and the run limits — come from `goxo.yaml`
+(at `GOXO_CONFIG`, default `/goxo.yaml`), and each may be overridden by an
+environment variable. Precedence: defaults < `goxo.yaml` < environment.
 
-| Variable | Meaning | Default |
-| --- | --- | --- |
-| `GOXO_HANDLER` | Handler command, whitespace-split (e.g. `python handler.py`) | required |
-| `GOXO_FDSET` | Path to the protobuf `FileDescriptorSet` for the codec | required |
-| `GOXO_HANDLER_TIMEOUT` | Per-message timeout (Go duration) | `30m` |
-| `UNIVERSE` | Scan universe (informational) | — |
-| `OXO_SETTINGS_PATH` | `AgentInstanceSettings` proto written by the runtime | `/tmp/settings.binproto` |
-| `OXO_DEFINITION_PATH` | Agent definition (`ostorlab.yaml`) | `/tmp/ostorlab.yaml` |
+```yaml
+# goxo.yaml
+handler: [python, /app/handler.py]  # or a string, split on whitespace
+fdset: /app/agent.fdset
+timeout: 30s                        # per-message (Go duration); absent = no timeout
+pool: 4                             # long-lived handler processes
+cap: 8                              # messages each process handles at once
+shutdown_grace: 10s                 # drain window before a worker is killed
+```
+
+| File key | Variable | Meaning | Default |
+| --- | --- | --- | --- |
+| `handler` | `GOXO_HANDLER` | Handler command (the env form is whitespace-split) | required |
+| `fdset` | `GOXO_FDSET` | Path to the protobuf `FileDescriptorSet` for the codec | required |
+| `timeout` | `GOXO_HANDLER_TIMEOUT` | Per-message timeout (Go duration) | none |
+| `pool` | `GOXO_POOL_SIZE` | Number of long-lived handler processes | `1` |
+| `cap` | `GOXO_WORKER_CAP` | Messages each process may handle at once | `1` |
+| `shutdown_grace` | `GOXO_SHUTDOWN_GRACE` | Time a worker gets to drain before SIGKILL | `10s` |
+| — | `GOXO_CONFIG` | Path to `goxo.yaml` | `/goxo.yaml` |
+| — | `UNIVERSE` | Scan universe (informational) | — |
+| — | `OXO_SETTINGS_PATH` | `AgentInstanceSettings` proto written by the runtime | `/tmp/settings.binproto` |
+| — | `OXO_DEFINITION_PATH` | Agent definition (`ostorlab.yaml`) | `/tmp/ostorlab.yaml` |
 
 The agent name, the consumed selectors, and the declared output selectors come
 from the definition / settings; the input selectors prefer the settings and
@@ -137,19 +153,23 @@ out_selectors:
   - v3.report.vulnerability
 ```
 
-### 4. Write the Dockerfile
+### 4. Write `goxo.yaml` and the Dockerfile
 
 The goxo base image owns the engine entrypoint and the healthcheck port. The
-agent overlay adds its files and points goxo at them:
+agent overlay adds its files and a `goxo.yaml` pointing goxo at them:
+
+```yaml
+# goxo.yaml
+handler: [/usr/local/bin/scanner]
+fdset: /opt/goxo/scanner.fdset
+```
 
 ```dockerfile
 FROM goxo:latest
 
 COPY scanner /usr/local/bin/scanner
 COPY scanner.fdset /opt/goxo/scanner.fdset
- 
-ENV GOXO_HANDLER=/usr/local/bin/scanner \
-    GOXO_FDSET=/opt/goxo/scanner.fdset
+COPY goxo.yaml /goxo.yaml
 ```
 
 ### 5. Build the image
