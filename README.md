@@ -20,7 +20,7 @@ an OXO agent SDK. [oxo-go](https://github.com/burogurama/oxo-go) is the Go one.
    protobuf)      │  healthcheck · runner        │
                   └──────────────┬──────────────┘
                                  │ JSON notes over stdin/stdout
-                                 │ (init · deliver/start · emit · done)
+                                  │ (init · deliver · pickup · emit · done)
                   ┌──────────────┴──────────────┐
                   │ handler process              │
                   │  your agent, in any language │
@@ -29,14 +29,10 @@ an OXO agent SDK. [oxo-go](https://github.com/burogurama/oxo-go) is the Go one.
 
 ## How a run works
 
-goxo spawns a **fresh handler process per phase** — one process for the start
-phase, one per delivered message. The process is briefed, does its work, and
-exits; that gives crash isolation per message.
+goxo spawns a **fresh handler process per message** — one process for each
+delivered message. The process is briefed, does its work, and exits; that gives
+crash isolation per message.
 
-- **Start phase** runs once at boot and completes before any message is
-  handled. It is always offered; a handler with no start work just replies
-  done. A start failure is fatal — goxo exits rather than serve. An agent with
-  no input selectors runs its start phase, then exits without consuming.
 - **Per message** goxo decodes the OXO protobuf to a dict, admits the delivery
   against the flow-control limits (cyclic / depth / accepted-agents from the
   scan settings), spawns the handler, and hands it the message. The handler's
@@ -82,25 +78,25 @@ fall back to the manifest.
 
 This is the contract every SDK implements. Each note is one frame: a **4-byte
 big-endian length prefix** followed by a **JSON body**. The current protocol
-version is `1` (sent in `init`).
+version is `2` (sent in `init`).
 
 | Note | Direction | Purpose |
 | --- | --- | --- |
 | `init` | engine → handler | Always first. Carries protocol version, agent identity, config, and the input selectors. |
-| `start` | engine → handler | Run the start phase. Carries no data. |
 | `deliver` | engine → handler | One decoded message: selector, data dict, metadata, and an `id`. |
-| `emit` | handler → engine | Publish `data` on an output selector. Carries an `id`. |
 | `emit_ack` | engine → handler | Answers an `emit`: `ok`, or `error` with a reason (e.g. undeclared output). Advisory. |
-| `done` | handler → engine | Ends the phase: `ok` or `error`. For a delivery this maps to the bus ack/nack. |
+| `shutdown` | engine → handler | Asks the handler to stop within a deadline. The engine also closes stdin, which is the authoritative shutdown cue. |
+| `pickup` | handler → engine | Sent the instant a deliver is read, before any handler code runs. Tells the engine the message was picked up (dropped on crash) vs. unread (requeued on crash). |
+| `emit` | handler → engine | Publish `data` on an output selector. Carries an `id` and an optional `deliver` id linking it to the originating message. |
+| `done` | handler → engine | Ends the work for a deliver: `ok` or `error`. For a delivery this maps to the bus ack/nack. |
 
-A phase is therefore: read `init`, read exactly one of `start`/`deliver`, send
-zero or more `emit`s (each answered by an `emit_ack`), then send a terminal
-`done`. `done` is always an explicit note, never an exit code, and stays
-authoritative for the message outcome.
+A handler phase is therefore: read `init`, read a `deliver`, optionally send a
+`pickup`, send zero or more `emit`s (each answered by an `emit_ack`), then send
+a terminal `done`. `done` is always an explicit note, never an exit code, and
+stays authoritative for the message outcome.
 
-One handler process serves exactly one phase — a single `start` or a single
-`deliver` — and then exits. Handling more than one message in a single handler
-process is not yet supported.
+One handler process serves exactly one `deliver` and then exits. Handling more
+than one message in a single handler process is not yet supported.
 
 Logs go to **stderr** — the handler must keep **stdout** free of anything but
 notes.
